@@ -1,0 +1,23 @@
+{
+  "DESIGN_NAME": "PE_MAC_WS_PIPELINED_CG",
+  "VERILOG_FILES": ["dir::src/SystolicArray/PE.v"],
+  "CLOCK_PORT": "clk",
+  "CLOCK_PERIOD": 10.0,
+
+  "FP_CORE_UTIL": 50,
+  "FP_ASPECT_RATIO": 1,
+  "PL_TARGET_DENSITY": 0.5,
+
+  "PDK": "sky130A",
+  "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
+
+  "SYNTH_BUFFERING": true,
+  "SYNTH_POWER_REPORT": "power_post_synth.rpt",
+  "STA_POWER_REPORT": "power_post_sta.rpt",
+  "DIODE_INSERTION_STRATEGY": 0,
+
+  "LEC_ENABLE": true,
+  "SYNTH_NO_FLAT": 1,
+  "GRT_REFINEMENT": true,
+  "CTS_OPTIMIZATION": true
+}
