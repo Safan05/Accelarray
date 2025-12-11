@@ -44,12 +44,14 @@ module control_unit #(
     output reg                      sa_enable,      // Enable systolic array
     output reg                      sa_clear,       // Clear accumulators
     output reg                      sa_load_weight, // Load weights into PEs
-    input  wire                     sa_done,        // Array computation done
+    output reg                      tile_start,     // Pulse: start processing a kernel tile
+    output reg                      last_tile,      // Flag: this is the final tile
+    input  wire                     tile_done,      // Current tile complete
+    input  wire                     sa_done,        // ALL tiles complete (final results ready)
     
     // Configuration Outputs (latched values)
     output reg  [6:0]               latched_N,      // Latched N value
     output reg  [4:0]               latched_K,      // Latched K value
-    output reg  [11:0]              output_size,    // (N-K+1)^2 output elements
     
     // Status/Debug
     output reg  [2:0]               current_state,  // Current FSM state
@@ -76,7 +78,7 @@ module control_unit #(
     //==========================================================================
     // Internal Registers
     //==========================================================================
-    reg [2:0]  state, next_state;
+    reg [2:0]  state, next_state,prev_state;
     reg [15:0] weight_count;            // Counter for weight elements (K*K)
     reg [15:0] input_count;             // Counter for input tile elements
     reg [15:0] output_count;            // Counter for output elements
@@ -90,6 +92,7 @@ module control_unit #(
     reg        compute_done;            // Current computation done
     reg        drain_done;              // Drain operation done
     reg        first_tile;              // First tile flag (no ping-pong swap)
+    reg        state_entry;             // Flag to detect state entry (for pulse signals)
     
     //==========================================================================
     // Combinational: Calculate output dimensions
@@ -102,9 +105,20 @@ module control_unit #(
     //==========================================================================
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state <= STATE_IDLE;
+            state      <= STATE_IDLE;
+            prev_state <= STATE_IDLE;
         end else begin
-            state <= next_state;
+            prev_state <= state;
+            state      <= next_state;
+        end
+    end
+    
+    // Detect state entry (rising edge of state change)
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state_entry <= 1'b0;
+        end else begin
+            state_entry <= (state != prev_state);
         end
     end
     
@@ -139,7 +153,8 @@ module control_unit #(
             end
             
             STATE_COMPUTE: begin
-                if (compute_done || sa_done) begin
+                // Transition when tile completes (tile_done) or entire array done (sa_done)
+                if (tile_done || compute_done || sa_done) begin
                     next_state = STATE_DRAIN;
                 end
             end
@@ -177,7 +192,6 @@ module control_unit #(
             total_weights <= 16'd0;
             total_inputs  <= 16'd0;
             total_outputs <= 12'd0;
-            output_size   <= 12'd0;
         end else if (state == STATE_IDLE && start) begin
             // Latch configuration on start
             latched_N     <= cfg_N;
@@ -185,7 +199,6 @@ module control_unit #(
             total_weights <= cfg_K * cfg_K;
             total_inputs  <= cfg_N * cfg_N;
             total_outputs <= (cfg_N - cfg_K + 1) * (cfg_N - cfg_K + 1);
-            output_size   <= (cfg_N - cfg_K + 1) * (cfg_N - cfg_K + 1);
         end
     end
 
@@ -346,31 +359,35 @@ module control_unit #(
                 STATE_LOAD_WEIGHTS: begin
                     agu_enable <= 1'b1;
                     agu_mode   <= AGU_MODE_LOAD_WEIGHT;
-                    if (state != next_state || weight_count == 0) begin
-                        agu_start <= 1'b1;  // Start AGU on state entry
+                    // Pulse agu_start only once on state entry
+                    if (state_entry && prev_state != STATE_LOAD_WEIGHTS) begin
+                        agu_start <= 1'b1;
                     end
                 end
                 
                 STATE_LOAD_INPUT: begin
                     agu_enable <= 1'b1;
                     agu_mode   <= AGU_MODE_LOAD_INPUT;
-                    if (input_count == 0) begin
-                        agu_start <= 1'b1;  // Start AGU for new tile
+                    // Pulse agu_start once on state entry
+                    if (state_entry && prev_state != STATE_LOAD_INPUT) begin
+                        agu_start <= 1'b1;
                     end
                 end
                 
                 STATE_COMPUTE: begin
                     agu_enable <= 1'b1;
                     agu_mode   <= AGU_MODE_SLIDING_WIN;
-                    if (!compute_done && !sa_done) begin
-                        agu_start <= 1'b1;  // Continuous sliding window
+                    // Pulse agu_start once on state entry
+                    if (state_entry && prev_state != STATE_COMPUTE) begin
+                        agu_start <= 1'b1;
                     end
                 end
                 
                 STATE_DRAIN: begin
                     agu_enable <= 1'b1;
                     agu_mode   <= AGU_MODE_UNLOAD;
-                    if (!drain_done) begin
+                    // Pulse agu_start once on state entry
+                    if (state_entry && prev_state != STATE_DRAIN) begin
                         agu_start <= 1'b1;
                     end
                 end
@@ -415,8 +432,10 @@ module control_unit #(
                 STATE_LOAD_INPUT: begin
                     mem_write_en <= rx_valid;     // Write when valid data
                     mem_read_en  <= 1'b0;
-                    // Ping-pong: write to opposite bank being read
-                    bank_sel     <= first_tile ? 1'b0 : ~bank_sel;
+                    // Ping-pong: toggle bank_sel only on state entry
+                    if (state_entry && prev_state != STATE_LOAD_INPUT) begin
+                        bank_sel <= first_tile ? 1'b0 : ~bank_sel;
+                    end
                 end
                 
                 STATE_COMPUTE: begin
@@ -451,23 +470,32 @@ module control_unit #(
             sa_enable      <= 1'b0;
             sa_clear       <= 1'b0;
             sa_load_weight <= 1'b0;
+            tile_start     <= 1'b0;
+            last_tile      <= 1'b0;
         end else begin
+            // Default: pulse signals go low
+            tile_start <= 1'b0;
+            
             case (state)
                 STATE_IDLE: begin
                     sa_enable      <= 1'b0;
-                    sa_clear       <= 1'b1;  // Clear on idle
+                    sa_clear       <= 1'b0;  // Don't continuously clear in IDLE
                     sa_load_weight <= 1'b0;
+                    last_tile      <= 1'b0;
                 end
                 
                 STATE_LOAD_WEIGHTS: begin
                     sa_enable      <= 1'b0;
-                    sa_clear       <= 1'b0;
+                    // Pulse sa_clear once at the start of operation
+                    sa_clear       <= (state_entry && prev_state == STATE_IDLE);
                     sa_load_weight <= rx_valid;  // Load weights into PEs
+                    last_tile      <= 1'b0;
                 end
                 
                 STATE_LOAD_INPUT: begin
                     sa_enable      <= 1'b0;
-                    sa_clear       <= first_tile;  // Clear accumulators for first tile
+                    // Pulse sa_clear once at first tile entry only
+                    sa_clear       <= (state_entry && prev_state != STATE_LOAD_INPUT && first_tile);
                     sa_load_weight <= 1'b0;
                 end
                 
@@ -475,6 +503,15 @@ module control_unit #(
                     sa_enable      <= 1'b1;  // Enable MAC operations
                     sa_clear       <= 1'b0;
                     sa_load_weight <= 1'b0;
+                    
+                    // Pulse tile_start once on entry to COMPUTE
+                    if (state_entry && prev_state != STATE_COMPUTE) begin
+                        tile_start <= 1'b1;
+                    end
+                    
+                    // Set last_tile when this is the final computation
+                    // (output_count + current tile outputs >= total_outputs)
+                    last_tile <= (output_count + (ARRAY_SIZE * ARRAY_SIZE) >= total_outputs);
                 end
                 
                 STATE_DRAIN: begin
@@ -487,12 +524,14 @@ module control_unit #(
                     sa_enable      <= 1'b0;
                     sa_clear       <= 1'b0;
                     sa_load_weight <= 1'b0;
+                    last_tile      <= 1'b0;
                 end
                 
                 default: begin
                     sa_enable      <= 1'b0;
-                    sa_clear       <= 1'b1;
+                    sa_clear       <= 1'b0;  // Don't clear in default
                     sa_load_weight <= 1'b0;
+                    last_tile      <= 1'b0;
                 end
             endcase
         end

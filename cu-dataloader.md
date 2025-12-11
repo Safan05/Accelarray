@@ -80,16 +80,28 @@ graph TB
 
 ## 🔌 External Data Stream Interface
 
-These signals handle communication with external DRAM (managed by Data Loader with CU control):
+These signals handle communication with external DRAM. **All data signals go through the Data Loader**, while the **Control Unit** only receives status/control signals:
+
+### Data Loader ↔ External DRAM
 
 | Signal     | Width    | Direction     | Description                       |
 | ---------- | -------- | ------------- | --------------------------------- |
 | `rx_data`  | 8-32 bit | External → DL | Incoming data stream from DRAM    |
-| `rx_valid` | 1-bit    | External → CU | DRAM has valid data to send       |
-| `rx_ready` | 1-bit    | CU → External | Accelerator ready to accept data  |
+| `rx_valid` | 1-bit    | External → DL | DRAM has valid data to send       |
+| `rx_ready` | 1-bit    | DL → External | Data Loader ready to accept data  |
 | `tx_data`  | 8-32 bit | DL → External | Outgoing data stream to DRAM      |
-| `tx_valid` | 1-bit    | CU → External | Valid result available for output |
-| `tx_ready` | 1-bit    | External → CU | DRAM ready to accept results      |
+| `tx_valid` | 1-bit    | DL → External | Data Loader has valid result      |
+| `tx_ready` | 1-bit    | External → DL | DRAM ready to accept results      |
+
+### Data Loader → Control Unit (Status)
+
+| Signal       | Width | Direction | Description                              |
+| ------------ | ----- | --------- | ---------------------------------------- |
+| `load_done`  | 1-bit | DL → CU   | Loading operation complete               |
+| `drain_done` | 1-bit | DL → CU   | Drain operation complete                 |
+
+> [!NOTE]
+> The Control Unit does NOT directly interface with DRAM. All data handshaking is managed by the Data Loader. CU only receives completion status signals.
 
 ---
 
