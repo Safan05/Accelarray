@@ -44,6 +44,8 @@ module control_unit #(
     output reg                      sa_enable,      // Enable systolic array
     output reg                      sa_clear,       // Clear accumulators
     output reg                      sa_load_weight, // Load weights into PEs
+    output reg                      sa_mem_read_en, // SA SRAM read enable (SA direct access)
+    output reg                      sa_mem_write_en,// SA SRAM write enable (write results)
     output reg                      tile_start,     // Pulse: start processing a kernel tile
     output reg                      last_tile,      // Flag: this is the final tile
     input  wire                     tile_done,      // Current tile complete
@@ -424,14 +426,14 @@ module control_unit #(
                 end
                 
                 STATE_LOAD_WEIGHTS: begin
-                    mem_write_en    <= rx_valid;  // Write when valid data
-                    mem_read_en     <= 1'b0;
+                    mem_write_en    <= rx_valid;  // DL writes when valid data
+                    mem_read_en     <= 1'b0;      // DL not reading
                     weight_bank_sel <= 1'b0;      // Weights to bank 0
                 end
                 
                 STATE_LOAD_INPUT: begin
-                    mem_write_en <= rx_valid;     // Write when valid data
-                    mem_read_en  <= 1'b0;
+                    mem_write_en <= rx_valid;     // DL writes when valid data
+                    mem_read_en  <= 1'b0;         // DL not reading
                     // Ping-pong: toggle bank_sel only on state entry
                     if (state_entry && prev_state != STATE_LOAD_INPUT) begin
                         bank_sel <= first_tile ? 1'b0 : ~bank_sel;
@@ -439,14 +441,14 @@ module control_unit #(
                 end
                 
                 STATE_COMPUTE: begin
-                    mem_write_en <= 1'b0;
-                    mem_read_en  <= 1'b1;         // Read operands
-                    // Read from the bank we just wrote to
+                    mem_write_en <= 1'b0;         // DL not writing
+                    mem_read_en  <= 1'b0;         // DL not reading (SA reads directly!)
+                    // SA uses sa_mem_read_en (controlled in SA control block)
                 end
                 
                 STATE_DRAIN: begin
-                    mem_write_en <= 1'b0;
-                    mem_read_en  <= 1'b1;         // Read results
+                    mem_write_en <= 1'b0;         // Not writing
+                    mem_read_en  <= 1'b1;         // DL reads results from SRAM to send out
                 end
                 
                 STATE_DONE: begin
@@ -467,42 +469,52 @@ module control_unit #(
     //==========================================================================
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            sa_enable      <= 1'b0;
-            sa_clear       <= 1'b0;
-            sa_load_weight <= 1'b0;
-            tile_start     <= 1'b0;
-            last_tile      <= 1'b0;
+            sa_enable       <= 1'b0;
+            sa_clear        <= 1'b0;
+            sa_load_weight  <= 1'b0;
+            sa_mem_read_en  <= 1'b0;
+            sa_mem_write_en <= 1'b0;
+            tile_start      <= 1'b0;
+            last_tile       <= 1'b0;
         end else begin
             // Default: pulse signals go low
             tile_start <= 1'b0;
             
             case (state)
                 STATE_IDLE: begin
-                    sa_enable      <= 1'b0;
-                    sa_clear       <= 1'b0;  // Don't continuously clear in IDLE
-                    sa_load_weight <= 1'b0;
-                    last_tile      <= 1'b0;
+                    sa_enable       <= 1'b0;
+                    sa_clear        <= 1'b0;  // Don't continuously clear in IDLE
+                    sa_load_weight  <= 1'b0;
+                    sa_mem_read_en  <= 1'b0;
+                    sa_mem_write_en <= 1'b0;
+                    last_tile       <= 1'b0;
                 end
                 
                 STATE_LOAD_WEIGHTS: begin
-                    sa_enable      <= 1'b0;
+                    sa_enable       <= 1'b0;
                     // Pulse sa_clear once at the start of operation
-                    sa_clear       <= (state_entry && prev_state == STATE_IDLE);
-                    sa_load_weight <= rx_valid;  // Load weights into PEs
-                    last_tile      <= 1'b0;
+                    sa_clear        <= (state_entry && prev_state == STATE_IDLE);
+                    sa_load_weight  <= rx_valid;  // Load weights into PEs
+                    sa_mem_read_en  <= 1'b0;
+                    sa_mem_write_en <= 1'b0;
+                    last_tile       <= 1'b0;
                 end
                 
                 STATE_LOAD_INPUT: begin
-                    sa_enable      <= 1'b0;
+                    sa_enable       <= 1'b0;
                     // Pulse sa_clear once at first tile entry only
-                    sa_clear       <= (state_entry && prev_state != STATE_LOAD_INPUT && first_tile);
-                    sa_load_weight <= 1'b0;
+                    sa_clear        <= (state_entry && prev_state != STATE_LOAD_INPUT && first_tile);
+                    sa_load_weight  <= 1'b0;
+                    sa_mem_read_en  <= 1'b0;
+                    sa_mem_write_en <= 1'b0;
                 end
                 
                 STATE_COMPUTE: begin
-                    sa_enable      <= 1'b1;  // Enable MAC operations
-                    sa_clear       <= 1'b0;
-                    sa_load_weight <= 1'b0;
+                    sa_enable       <= 1'b1;  // Enable MAC operations
+                    sa_clear        <= 1'b0;
+                    sa_load_weight  <= 1'b0;
+                    sa_mem_read_en  <= 1'b1;  // SA reads input from SRAM
+                    sa_mem_write_en <= 1'b0;  // NO write - results accumulate in PEs
                     
                     // Pulse tile_start once on entry to COMPUTE
                     if (state_entry && prev_state != STATE_COMPUTE) begin
@@ -515,23 +527,29 @@ module control_unit #(
                 end
                 
                 STATE_DRAIN: begin
-                    sa_enable      <= 1'b0;  // Disable during drain
-                    sa_clear       <= 1'b0;
-                    sa_load_weight <= 1'b0;
+                    sa_enable       <= 1'b0;  // SA disabled during drain
+                    sa_clear        <= 1'b0;
+                    sa_load_weight  <= 1'b0;
+                    sa_mem_read_en  <= 1'b0;  // SA not reading
+                    sa_mem_write_en <= 1'b1;  // SA writes final results to SRAM!
                 end
                 
                 STATE_DONE: begin
-                    sa_enable      <= 1'b0;
-                    sa_clear       <= 1'b0;
-                    sa_load_weight <= 1'b0;
-                    last_tile      <= 1'b0;
+                    sa_enable       <= 1'b0;
+                    sa_clear        <= 1'b0;
+                    sa_load_weight  <= 1'b0;
+                    sa_mem_read_en  <= 1'b0;
+                    sa_mem_write_en <= 1'b0;
+                    last_tile       <= 1'b0;
                 end
                 
                 default: begin
-                    sa_enable      <= 1'b0;
-                    sa_clear       <= 1'b0;  // Don't clear in default
-                    sa_load_weight <= 1'b0;
-                    last_tile      <= 1'b0;
+                    sa_enable       <= 1'b0;
+                    sa_clear        <= 1'b0;  // Don't clear in default
+                    sa_load_weight  <= 1'b0;
+                    sa_mem_read_en  <= 1'b0;
+                    sa_mem_write_en <= 1'b0;
+                    last_tile       <= 1'b0;
                 end
             endcase
         end
