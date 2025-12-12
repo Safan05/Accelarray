@@ -11,8 +11,9 @@ module sram #(
     input wire clk,
     input wire rst_n,
     
-    // Ping-Pong control
-    input wire bank_sel,                // 0=Bank0 active, 1=Bank1 active
+    // Ping-Pong control - Independent bank selection
+    input wire loader_bank_sel,         // Bank selector for Data Loader (0=Bank0, 1=Bank1)
+    input wire array_bank_sel,          // Bank selector for Systolic Array (0=Bank0, 1=Bank1)
     
     // ========== Input Buffer Interface (Image Tiles) ==========
     // Write Port (Data Loader)
@@ -47,7 +48,8 @@ module sram #(
     // Registered control signals for clean reset behavior
     reg input_wr_en_r, input_rd_en_r;
     reg weight_wr_en_r, weight_rd_en_r;
-    reg bank_sel_r;
+    reg loader_bank_sel_r;
+    reg array_bank_sel_r;
     
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -55,13 +57,15 @@ module sram #(
             input_rd_en_r <= 1'b0;
             weight_wr_en_r <= 1'b0;
             weight_rd_en_r <= 1'b0;
-            bank_sel_r <= 1'b0;
+            loader_bank_sel_r <= 1'b0;  // Data Loader starts with Bank 0
+            array_bank_sel_r <= 1'b1;   // Systolic Array starts with Bank 1
         end else begin
             input_wr_en_r <= input_wr_en;
             input_rd_en_r <= input_rd_en;
             weight_wr_en_r <= weight_wr_en;
             weight_rd_en_r <= weight_rd_en;
-            bank_sel_r <= bank_sel;
+            loader_bank_sel_r <= loader_bank_sel;
+            array_bank_sel_r <= array_bank_sel;
         end
     end
     
@@ -102,31 +106,44 @@ module sram #(
     // ========================================================================
     // Bank Selection Logic for Input Buffers (Ping-Pong)
     // ========================================================================
-    // bank_sel = 0: Bank0 = Write (Data Loader), Bank1 = Read (Systolic Array)
-    // bank_sel = 1: Bank1 = Write (Data Loader), Bank0 = Read (Systolic Array)
+    // Independent control allows Data Loader and Systolic Array to access different banks
+    // 
+    // Typical operation:
+    //   loader_bank_sel=0, array_bank_sel=1: Loader writes Bank0, Array reads Bank1
+    //   loader_bank_sel=1, array_bank_sel=0: Loader writes Bank1, Array reads Bank0
     
-    // Bank 0 Control (Port 0 = Write when bank_sel=0, Port 1 = Read when bank_sel=1)
-    assign input_bank0_csb0 = bank_sel_r ? 1'b1 : ~input_wr_en_r;    // Active when bank_sel=0
-    assign input_bank0_web0 = bank_sel_r ? 1'b1 : 1'b0;              // Always write mode
-    assign input_bank0_addr0 = bank_sel_r ? {ADDR_WIDTH{1'b0}} : input_wr_addr;
-    assign input_bank0_din0 = bank_sel_r ? {SRAM_WIDTH{1'b0}} : input_wr_data;
-    assign input_bank0_wmask0 = bank_sel_r ? {(SRAM_WIDTH/8){1'b0}} : input_wr_mask;
+    // ========================================================================
+    // Bank 0 Control
+    // ========================================================================
+    // Port 0: Write port - controlled by Data Loader
+    assign input_bank0_csb0 = loader_bank_sel_r ? 1'b1 : ~input_wr_en_r;  // Active when loader selects Bank0
+    assign input_bank0_web0 = 1'b0;  // Port 0 is always in write mode
+    assign input_bank0_addr0 = loader_bank_sel_r ? {ADDR_WIDTH{1'b0}} : input_wr_addr;
+    assign input_bank0_din0 = loader_bank_sel_r ? {SRAM_WIDTH{1'b0}} : input_wr_data;
+    assign input_bank0_wmask0 = loader_bank_sel_r ? {(SRAM_WIDTH/8){1'b0}} : input_wr_mask;
     
-    assign input_bank0_csb1 = bank_sel_r ? ~input_rd_en_r : 1'b1;    // Active when bank_sel=1
-    assign input_bank0_addr1 = bank_sel_r ? input_rd_addr : {ADDR_WIDTH{1'b0}};
+    // Port 1: Read port - controlled by Systolic Array
+    assign input_bank0_csb1 = array_bank_sel_r ? 1'b1 : ~input_rd_en_r;  // Active when array selects Bank0
+    assign input_bank0_addr1 = array_bank_sel_r ? {ADDR_WIDTH{1'b0}} : input_rd_addr;
     
-    // Bank 1 Control (Port 0 = Write when bank_sel=1, Port 1 = Read when bank_sel=0)
-    assign input_bank1_csb0 = bank_sel_r ? ~input_wr_en_r : 1'b1;    // Active when bank_sel=1
-    assign input_bank1_web0 = bank_sel_r ? 1'b0 : 1'b1;              // Always write mode
-    assign input_bank1_addr0 = bank_sel_r ? input_wr_addr : {ADDR_WIDTH{1'b0}};
-    assign input_bank1_din0 = bank_sel_r ? input_wr_data : {SRAM_WIDTH{1'b0}};
-    assign input_bank1_wmask0 = bank_sel_r ? input_wr_mask : {(SRAM_WIDTH/8){1'b0}};
+    // ========================================================================
+    // Bank 1 Control
+    // ========================================================================
+    // Port 0: Write port - controlled by Data Loader
+    assign input_bank1_csb0 = loader_bank_sel_r ? ~input_wr_en_r : 1'b1;  // Active when loader selects Bank1
+    assign input_bank1_web0 = 1'b0;  // Port 0 is always in write mode
+    assign input_bank1_addr0 = loader_bank_sel_r ? input_wr_addr : {ADDR_WIDTH{1'b0}};
+    assign input_bank1_din0 = loader_bank_sel_r ? input_wr_data : {SRAM_WIDTH{1'b0}};
+    assign input_bank1_wmask0 = loader_bank_sel_r ? input_wr_mask : {(SRAM_WIDTH/8){1'b0}};
     
-    assign input_bank1_csb1 = bank_sel_r ? 1'b1 : ~input_rd_en_r;    // Active when bank_sel=0
-    assign input_bank1_addr1 = bank_sel_r ? {ADDR_WIDTH{1'b0}} : input_rd_addr;
+    // Port 1: Read port - controlled by Systolic Array
+    assign input_bank1_csb1 = array_bank_sel_r ? ~input_rd_en_r : 1'b1;  // Active when array selects Bank1
+    assign input_bank1_addr1 = array_bank_sel_r ? input_rd_addr : {ADDR_WIDTH{1'b0}};
     
-    // Output Mux - Select read data from active read bank
-    assign input_rd_data = bank_sel_r ? input_bank0_dout1 : input_bank1_dout1;
+    // ========================================================================
+    // Output Mux - Select read data based on Systolic Array's bank selection
+    // ========================================================================
+    assign input_rd_data = array_bank_sel_r ? input_bank1_dout1 : input_bank0_dout1;
     
     // ========================================================================
     // Weight/Accumulation Buffer Control (No Ping-Pong)
@@ -155,7 +172,7 @@ module sram #(
     
     // Input Buffer Bank 0
     sram_1rw1r_32_256_8_sky130 input_bank0_inst (
-        // Port 0: R/W
+        // Port 0: Write (Data Loader)
         .clk0(clk),
         .csb0(input_bank0_csb0),
         .web0(input_bank0_web0),
@@ -164,7 +181,7 @@ module sram #(
         .din0(input_bank0_din0),
         .dout0(input_bank0_dout0),
         
-        // Port 1: Read-Only
+        // Port 1: Read (Systolic Array)
         .clk1(clk),
         .csb1(input_bank0_csb1),
         .addr1(input_bank0_addr1),
@@ -173,7 +190,7 @@ module sram #(
     
     // Input Buffer Bank 1
     sram_1rw1r_32_256_8_sky130 input_bank1_inst (
-        // Port 0: R/W
+        // Port 0: Write (Data Loader)
         .clk0(clk),
         .csb0(input_bank1_csb0),
         .web0(input_bank1_web0),
@@ -182,7 +199,7 @@ module sram #(
         .din0(input_bank1_din0),
         .dout0(input_bank1_dout0),
         
-        // Port 1: Read-Only
+        // Port 1: Read (Systolic Array)
         .clk1(clk),
         .csb1(input_bank1_csb1),
         .addr1(input_bank1_addr1),
