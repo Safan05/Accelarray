@@ -2,7 +2,7 @@
 // Now implements the required 1-cycle register on the Psum input path
 // to match the latency of the Multiplication stage.
 
-module PE_MAC_WS_PIPELINED_CG (
+module PE (
     // Global Signals
     input wire clk,
     input wire rst_n,
