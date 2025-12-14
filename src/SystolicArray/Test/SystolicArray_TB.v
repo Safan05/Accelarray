@@ -1,117 +1,126 @@
 `timescale 1ns / 1ps
 
-module tb_Systolic_Tiling;
+module tb_systolic_hard;
 
-    // Signals
-    reg clk, rst_n;
-    reg enable_cycle, load_W, accumulate_mode, capture_en;
-    reg [63:0] row_inputs;
-    reg [2:0] col_sel;
-    wire [31:0] sram_data_out;
+    reg clk;
+    reg rst_n;
+    reg enable_cycle;
+    reg load_W;
+    reg [7:0] row_in [0:7];
+    wire [31:0] dut_result;
+    wire dut_valid;
 
-    // Instantiation
-    Systolic_Array_Top uut (
-        .clk(clk), .rst_n(rst_n),
-        .enable_cycle(enable_cycle), .load_W(load_W),
-        .accumulate_mode(accumulate_mode), .capture_en(capture_en),
-        .row_inputs(row_inputs), .col_sel(col_sel),
-        .sram_data_out(sram_data_out)
+    // Instantiate DUT
+    systolic_array_8x8 dut (
+        .clk(clk),
+        .rst_n(rst_n),
+        .enable_cycle(enable_cycle),
+        .load_W(load_W),
+        .row_in_0(row_in[0]), .row_in_1(row_in[1]), .row_in_2(row_in[2]), .row_in_3(row_in[3]),
+        .row_in_4(row_in[4]), .row_in_5(row_in[5]), .row_in_6(row_in[6]), .row_in_7(row_in[7]),
+        .final_result(dut_result),
+        .result_valid(dut_valid)
     );
 
-    localparam T = 10;
-    always #(T/2) clk = ~clk;
+    always #5 clk = ~clk;
 
-    integer i, r;
+    // --- Helper Tasks ---
 
-    // TASK: Load Weights (Uniform Value)
-    task load_weights(input [7:0] val);
-        begin
-            $display("--- Loading Weights: %0d ---", val);
-            enable_cycle = 1; 
-            load_W = 0; // Shift mode
-            // Shift in 8 cols deep
-            for(i=0; i<8; i=i+1) begin
-                row_inputs = {8{val}}; 
-                #(T);
-            end
-            // Latch
-            load_W = 1; #(T);
-            load_W = 0;
-            row_inputs = 0; #(T);
-        end
+    // 1. Drive a uniform value (e.g., all 10s)
+    integer r;
+    task drive_uniform(input [7:0] val);
+        begin for(r=0; r<8; r=r+1) row_in[r] = val; end
     endtask
 
-    // TASK: Run Wave (Skewed Inputs)
-    task run_wave(input [7:0] val);
-        begin
-            $display("--- Running Wave Input: %0d ---", val);
-            // Run for 25 cycles to ensure wave clears 8x8 array
-            for (i = 0; i < 25; i = i + 1) begin
-                for (r = 0; r < 8; r = r + 1) begin
-                    // Skew logic: Row R active if time >= R
-                    if (i >= r && i < (r+8)) 
-                        row_inputs[r*8 +: 8] = val;
-                    else 
-                        row_inputs[r*8 +: 8] = 0;
-                end
-                #(T);
-            end
-        end
+    // 2. Drive a Gradient (Row 0 = 1, Row 1 = 2 ... Row 7 = 8)
+    task drive_gradient;
+        begin for(r=0; r<8; r=r+1) row_in[r] = r + 1; end
     endtask
 
     initial begin
+        $dumpfile("systolic_hard.vcd");
+        $dumpvars(0, tb_systolic_hard);
+        
         // Init
-        clk = 0; rst_n = 0;
-        enable_cycle = 0; load_W = 0;
-        accumulate_mode = 0; capture_en = 0;
-        row_inputs = 0; col_sel = 0;
+        clk = 0; rst_n = 0; enable_cycle = 0; load_W = 0; drive_uniform(0);
+        #20 rst_n = 1; #20;
 
-        // Reset
-        #(T*2) rst_n = 1; #(T);
+        $display("\n=== STARTING HARD VERIFICATION ===");
 
-        // =======================================================
-        // PASS 1: The "Left Tile"
-        // Inputs = 2, Weights = 1.  Result should be 8 * (2*1) = 16.
-        // =======================================================
-        load_weights(8'd1);
-        run_wave(8'd2);
-
-        // CAPTURE (Mode 0 = Overwrite)
-        accumulate_mode = 0; // First tile, clean the buffer
-        capture_en = 1;
-        #(T);
-        capture_en = 0;
-        $display("Pass 1 Complete. Buffer should hold 16.");
-
-        // =======================================================
-        // PASS 2: The "Right Tile" (Accumulation Test)
-        // Inputs = 4, Weights = 1. Result should be 8 * (4*1) = 32.
-        // TOTAL BUFFER should be 16 + 32 = 48.
-        // =======================================================
-        load_weights(8'd1); // Reload weights (simulating next tile weights)
-        run_wave(8'd4);     // Stream new data
-
-        // CAPTURE (Mode 1 = ADD)
-        accumulate_mode = 1; // Add to existing!
-        capture_en = 1;
-        #(T);
-        capture_en = 0;
-        $display("Pass 2 Complete. Buffer should hold 16 + 32 = 48.");
-
-        // =======================================================
-        // VERIFY OUTPUT
-        // =======================================================
-        $display("--- Reading Results ---");
-        for(i=0; i<8; i=i+1) begin
-            col_sel = i;
-            #(T);
-            if(sram_data_out == 48)
-                $display("Col %0d: %0d [PASS]", i, sram_data_out);
-            else
-                $display("Col %0d: %0d [FAIL - Exp 48]", i, sram_data_out);
+        // =================================================================
+        // TEST CASE 1: The "Sum of Squares" Test
+        // Weights: Gradient (1..8)
+        // Inputs:  Gradient (1..8)
+        // =================================================================
+        
+        // 1. Load Gradient Weights
+        // The array shifts weights horizontally. If we drive [1,2..8] into the rows
+        // for 16 cycles, EVERY column will end up holding [1,2..8] vertically.
+        $display("[TB] Loading Gradient Weights (Row0=1 ... Row7=8)...");
+        load_W = 1; enable_cycle = 1;
+        repeat(16) begin
+            drive_gradient(); 
+            @(posedge clk);
         end
+        load_W = 0; enable_cycle = 0;
+        drive_uniform(0);
+        repeat(10) @(posedge clk);
 
+        // 2. Stream Gradient Inputs
+        // Now we calculate (1*1) + (2*2) + ... + (8*8)
+        $display("[TB] Streaming Gradient Inputs (Row0=1 ... Row7=8)...");
+        enable_cycle = 1;
+        repeat(40) begin
+            drive_gradient(); 
+            @(posedge clk);
+        end
+        
+        // 3. Check for 1632
+        // Calculation: (1+4+9+16+25+36+49+64) = 204 per column.
+        // 8 Columns active = 204 * 8 = 1632.
+            begin
+                wait(dut_result == 1632);
+                $display("[PASS] Got Expected Result: 1632 (Sum of Squares Gradient)");
+            end
+            begin
+                $display("[FAIL] Timeout waiting for 1632. Got: %d", dut_result);
+            end
+
+        // =================================================================
+        // TEST CASE 2: The "Mixed Math" Test
+        // Weights: Still Gradient (1..8) from previous test (We didn't reload!)
+        // Inputs:  Uniform (10)
+        // =================================================================
+        
+        // Math:
+        // Row 0: 10 * 1 = 10
+        // Row 1: 10 * 2 = 20
+        // ...
+        // Row 7: 10 * 8 = 80
+        // Col Sum: 10 + 20 + ... + 80 = 360.
+        // Total (8 Cols): 360 * 8 = 2880.
+        
+        $display("\n[TB] Streaming Uniform Input (10) with Gradient Weights...");
+        repeat(40) begin
+            drive_uniform(10); 
+            @(posedge clk);
+        end
+        
+            begin
+                wait(dut_result == 2880);
+                $display("[PASS] Got Expected Result: 2880 (Gradient w/ Uniform Input)");
+            end
+            begin
+                $display("[FAIL] Timeout waiting for 2880. Got: %d", dut_result);
+            end
+
+        $display("\n=== ALL HARD CHECKS PASSED ===");
         $finish;
+    end
+    
+    // Safety
+    initial begin
+        #50000; $display("[FATAL] Watchdog Timeout"); $finish;
     end
 
 endmodule

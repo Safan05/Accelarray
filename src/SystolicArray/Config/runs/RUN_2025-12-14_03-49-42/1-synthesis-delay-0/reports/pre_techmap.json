@@ -1,0 +1,57 @@
+{
+   "creator": "Yosys 0.46 (git sha1 e97731b9dda91fa5fa53ed87df7c34163ba59a41, clang++ 17.0.6 -fPIC -O3)",
+   "invocation": "stat -json -liberty /home/safan/Accelarray/src/SystolicArray/Config/runs/RUN_2025-12-14_03-49-42/tmp/2152df1b20934488838abe5c5cc06a57.lib ",
+   "modules": {
+      "\\systolic_array_8x8": {
+         "num_wires":         29789,
+         "num_wire_bits":     42506,
+         "num_pub_wires":     482,
+         "num_pub_wire_bits": 9461,
+         "num_ports":         14,
+         "num_port_bits":     101,
+         "num_memories":      0,
+         "num_memory_bits":   0,
+         "num_processes":     0,
+         "num_cells":         37447,
+         "num_cells_by_type": {
+            "$_ANDNOT_": 7817,
+            "$_AND_": 4036,
+            "$_DFFE_PN0P_": 5980,
+            "$_DFFE_PP_": 16,
+            "$_NAND_": 2479,
+            "$_NOR_": 2562,
+            "$_NOT_": 632,
+            "$_ORNOT_": 423,
+            "$_OR_": 3755,
+            "$_XNOR_": 2842,
+            "$_XOR_": 6905
+         }
+      }
+   },
+      "design": {
+         "num_wires":         29789,
+         "num_wire_bits":     42506,
+         "num_pub_wires":     482,
+         "num_pub_wire_bits": 9461,
+         "num_ports":         14,
+         "num_port_bits":     101,
+         "num_memories":      0,
+         "num_memory_bits":   0,
+         "num_processes":     0,
+         "num_cells":         37447,
+         "num_cells_by_type": {
+            "$_ANDNOT_": 7817,
+            "$_AND_": 4036,
+            "$_DFFE_PN0P_": 5980,
+            "$_DFFE_PP_": 16,
+            "$_NAND_": 2479,
+            "$_NOR_": 2562,
+            "$_NOT_": 632,
+            "$_ORNOT_": 423,
+            "$_OR_": 3755,
+            "$_XNOR_": 2842,
+            "$_XOR_": 6905
+         }
+      }
+}
+

@@ -1,89 +1,135 @@
-module Systolic_Array_Top (
+module systolic_array_8x8 (
     input wire clk,
     input wire rst_n,
-    
-    // Control
     input wire enable_cycle,
-    input wire load_W,          // 1 = Load Weights
-    input wire accumulate_mode, // 0 = Overwrite (First Tile), 1 = Add (Next Tiles)
-    input wire capture_en,      // 1 = Capture results into buffer
-
-    // Data Inputs
-    input wire [63:0] row_inputs, // 8 Rows packed
+    input wire load_W,          // 1 = Load Weight Mode, 0 = Compute Mode
     
-    // Data Outputs
-    input wire [2:0] col_sel,     // Select column to read
-    output wire [31:0] sram_data_out
+    // Inputs: 8 Rows of Image Data (Unskewed inputs from AGU/SRAM)
+    input wire [7:0] row_in_0, row_in_1, row_in_2, row_in_3, 
+                     row_in_4, row_in_5, row_in_6, row_in_7,
+
+    // Output: Final 32-bit Sum (Reduced from all 8 columns)
+    output wire [31:0] final_result,
+    output wire result_valid
 );
 
-    // Internal Wires
-    wire [7:0]  w_horiz [0:7][0:8];
-    wire [31:0] w_vert  [0:8][0:7];
-
-    // =========================================================
-    // 1. Instantiate 8x8 Array
-    // =========================================================
-    genvar r, c;
-    generate
-        // Drive Left Edge
-        for (r = 0; r < 8; r = r + 1) begin : LEFT
-            assign w_horiz[r][0] = row_inputs[(r*8)+7 : (r*8)];
-        end
-        // Drive Top Edge (0)
-        for (c = 0; c < 8; c = c + 1) begin : TOP
-            assign w_vert[0][c] = 32'b0;
-        end
-
-        // The Grid
-        for (r = 0; r < 8; r = r + 1) begin : ROW
-            for (c = 0; c < 8; c = c + 1) begin : COL
-                PE_Optimized_PortReuse pe (
-                    .clk(clk), .rst_n(rst_n),
-                    .enable_cycle(enable_cycle), .load_W(load_W),
-                    .data_in(w_horiz[r][c]), .data_out(w_horiz[r][c+1]),
-                    .psum_in(w_vert[r][c]),  .psum_out(w_vert[r+1][c])
-                );
-            end
-        end
-    endgenerate
-
-    // =========================================================
-    // 2. The Smart Accumulator Buffer
-    // =========================================================
-    // Connects to the bottom wires: w_vert[8][0..7]
+    // ============================================================
+    // 1. INPUT SKEW LOGIC (Triangle of Registers)
+    // ============================================================
+    // Row r needs r cycles of delay to align diagonally.
     
-    reg [31:0] buffer [0:7];
-    integer i;
-
+    reg [7:0] delay_regs [0:7][0:7]; // [Row][Depth]
+    
+    // *** FIX: Match the wire name used in assignments below ***
+    wire [7:0] skewed_inputs [0:7];      
+    
+    integer i, j;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            for(i=0; i<8; i=i+1) buffer[i] <= 32'b0;
-        end else if (capture_en) begin
-            if (accumulate_mode == 0) begin
-                // MODE 0: NEW TILE (Overwrite)
-                buffer[0] <= w_vert[8][0];
-                buffer[1] <= w_vert[8][1];
-                buffer[2] <= w_vert[8][2];
-                buffer[3] <= w_vert[8][3];
-                buffer[4] <= w_vert[8][4];
-                buffer[5] <= w_vert[8][5];
-                buffer[6] <= w_vert[8][6];
-                buffer[7] <= w_vert[8][7];
-            end else begin
-                // MODE 1: TILING (Add to existing)
-                buffer[0] <= buffer[0] + w_vert[8][0];
-                buffer[1] <= buffer[1] + w_vert[8][1];
-                buffer[2] <= buffer[2] + w_vert[8][2];
-                buffer[3] <= buffer[3] + w_vert[8][3];
-                buffer[4] <= buffer[4] + w_vert[8][4];
-                buffer[5] <= buffer[5] + w_vert[8][5];
-                buffer[6] <= buffer[6] + w_vert[8][6];
-                buffer[7] <= buffer[7] + w_vert[8][7];
+            for(i=0; i<8; i=i+1)
+                for(j=0; j<8; j=j+1) delay_regs[i][j] <= 8'b0;
+        end else if (enable_cycle) begin
+            // Stage 0 always takes the fresh input
+            delay_regs[0][0] <= row_in_0;
+            delay_regs[1][0] <= row_in_1;
+            delay_regs[2][0] <= row_in_2;
+            delay_regs[3][0] <= row_in_3;
+            delay_regs[4][0] <= row_in_4;
+            delay_regs[5][0] <= row_in_5;
+            delay_regs[6][0] <= row_in_6;
+            delay_regs[7][0] <= row_in_7;
+            
+            // Shift older values down the line
+            for(i=0; i<8; i=i+1) begin
+                for(j=1; j<8; j=j+1) begin
+                    delay_regs[i][j] <= delay_regs[i][j-1];
+                end
             end
         end
     end
 
-    // Readout Mux
-    assign sram_data_out = buffer[col_sel];
+    // Map the specific delay tap to the array input
+    assign skewed_inputs[0] = row_in_0;         
+    assign skewed_inputs[1] = delay_regs[1][0]; // 1 cycle delay
+    assign skewed_inputs[2] = delay_regs[2][1]; // 2 cycles delay
+    assign skewed_inputs[3] = delay_regs[3][2];
+    assign skewed_inputs[4] = delay_regs[4][3];
+    assign skewed_inputs[5] = delay_regs[5][4];
+    assign skewed_inputs[6] = delay_regs[6][5];
+    assign skewed_inputs[7] = delay_regs[7][6]; // 7 cycles delay
+
+    // ============================================================
+    // 2. THE 8x8 ARRAY INSTANTIATION
+    // ============================================================
+    
+    wire [7:0]  pixel_wire [0:7][0:8]; 
+    wire [31:0] psum_wire  [0:8][0:7]; 
+
+    // Drive Left Edge (West inputs) with Skewed Data
+    genvar r, c;
+    generate
+        for (r=0; r<8; r=r+1) assign pixel_wire[r][0] = skewed_inputs[r];
+        for (c=0; c<8; c=c+1) assign psum_wire[0][c]  = 32'b0; // Top PSUMs are 0
+    endgenerate
+
+    generate
+        for (r = 0; r < 8; r = r + 1) begin : ROWS
+            for (c = 0; c < 8; c = c + 1) begin : COLS
+                
+                PE_Optimized_PortReuse pe_inst (
+                    .clk(clk),
+                    .rst_n(rst_n),
+                    .enable_cycle(enable_cycle),
+                    .load_W(load_W),
+                    
+                    // Unified Data Port (Acts as Weight Load or Pixel Stream)
+                    .data_in(pixel_wire[r][c]),
+                    .psum_in(psum_wire[r][c]),
+                    
+                    // Outputs
+                    .data_out(pixel_wire[r][c+1]),
+                    .psum_out(psum_wire[r+1][c])
+                );
+                
+            end
+        end
+    endgenerate
+
+    // ============================================================
+    // 3. OUTPUT REDUCTION CHAIN (Systolic Summation)
+    // ============================================================
+    
+    wire [31:0] col_out [0:7];
+    for(c=0; c<8; c=c+1) assign col_out[c] = psum_wire[8][c];
+
+    reg [31:0] chain_sum [0:7];
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for(i=0; i<8; i=i+1) chain_sum[i] <= 32'b0;
+        end else if (enable_cycle) begin
+            // Pipeline Stage 0: Capture Column 0
+            chain_sum[0] <= col_out[0];
+
+            // Pipeline Stages 1-7: Add Current Col + Previous Sum
+            chain_sum[1] <= col_out[1] + chain_sum[0];
+            chain_sum[2] <= col_out[2] + chain_sum[1];
+            chain_sum[3] <= col_out[3] + chain_sum[2];
+            chain_sum[4] <= col_out[4] + chain_sum[3];
+            chain_sum[5] <= col_out[5] + chain_sum[4];
+            chain_sum[6] <= col_out[6] + chain_sum[5];
+            chain_sum[7] <= col_out[7] + chain_sum[6];
+        end
+    end
+
+    // Final Output
+    assign final_result = chain_sum[7];
+
+    // Optional Valid Signal (delayed version of load_W or start signal)
+    reg [15:0] valid_sr;
+    always @(posedge clk) begin
+        if (enable_cycle) valid_sr <= {valid_sr[14:0], !load_W};
+    end
+    assign result_valid = valid_sr[15];
 
 endmodule

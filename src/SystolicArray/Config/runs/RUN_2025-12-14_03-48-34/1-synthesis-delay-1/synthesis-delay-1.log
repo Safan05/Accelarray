@@ -1,0 +1,27 @@
+
+ /----------------------------------------------------------------------------\
+ |  yosys -- Yosys Open SYnthesis Suite                                       |
+ |  Copyright (C) 2012 - 2024  Claire Xenia Wolf <claire@yosyshq.com>         |
+ |  Distributed under an ISC-like license, type "license" to see terms        |
+ \----------------------------------------------------------------------------/
+ Yosys 0.46 (git sha1 e97731b9dda91fa5fa53ed87df7c34163ba59a41, clang++ 17.0.6 -fPIC -O3)
+Loaded SDC plugin
+
+1. Executing Liberty frontend: /root/.volare/volare/sky130/versions/0fe599b2afb6708d281543108caf8310912f54af/sky130A/libs.ref/sky130_fd_sc_hd/lib/sky130_fd_sc_hd__tt_025C_1v80.lib
+Imported 428 cell types from liberty file.
+[INFO] Using SDC file '/home/safan/Accelarray/src/SystolicArray/Config/runs/RUN_2025-12-14_03-48-34/1-synthesis-delay-1/synthesis.abc.sdc' for ABC…
+
+2. Executing Verilog-2005 frontend: /home/safan/Accelarray/src/SystolicArray/PE.v
+Parsing SystemVerilog input from `/home/safan/Accelarray/src/SystolicArray/PE.v' to AST representation.
+Storing AST representation for module `$abstract\PE_Optimized_PortReuse'.
+Successfully finished Verilog frontend.
+
+3. Executing Verilog-2005 frontend: /home/safan/Accelarray/src/SystolicArray/SystolicArray.v
+Parsing SystemVerilog input from `/home/safan/Accelarray/src/SystolicArray/SystolicArray.v' to AST representation.
+Storing AST representation for module `$abstract\systolic_array_8x8'.
+Successfully finished Verilog frontend.
+
+4. Executing HIERARCHY pass (managing design hierarchy).
+
+5. Executing AST frontend in derive mode using pre-parsed AST for module `\systolic_array_8x8'.
+/home/safan/Accelarray/src/SystolicArray/SystolicArray.v:51: ERROR: Identifier `\skewed_inputs' is implicitly declared and `default_nettype is set to none.

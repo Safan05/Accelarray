@@ -1,0 +1,27 @@
+{
+    "nl": "/home/safan/Accelarray/src/SystolicArray/Config/runs/RUN_2025-12-14_03-49-42/1-synthesis-area-0/systolic_array_8x8.nl.v",
+    "pnl": null,
+    "pnl-sdf-friendly": null,
+    "pnl-npc": null,
+    "def": null,
+    "lef": null,
+    "openroad-lef": null,
+    "odb": null,
+    "sdc": null,
+    "sdf": null,
+    "spef": null,
+    "lib": null,
+    "spice": null,
+    "mag": null,
+    "gds": null,
+    "mag_gds": null,
+    "klayout_gds": null,
+    "json_h": null,
+    "vh": null,
+    "metrics": {
+        "design__instance__count": 37988,
+        "design__instance__area": 465671.616,
+        "design__instance_unmapped__count": 0,
+        "synthesis__check_error__count": 32
+    }
+}

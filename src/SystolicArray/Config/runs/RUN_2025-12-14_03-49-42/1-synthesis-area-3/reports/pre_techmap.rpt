@@ -1,0 +1,38 @@
+440. Printing statistics.
+
+=== systolic_array_8x8 ===
+
+   Number of wires:              29789
+   Number of wire bits:          42506
+   Number of public wires:         482
+   Number of public wire bits:    9461
+   Number of ports:                 14
+   Number of port bits:            101
+   Number of memories:               0
+   Number of memory bits:            0
+   Number of processes:              0
+   Number of cells:              37447
+     $_ANDNOT_                    7817
+     $_AND_                       4036
+     $_DFFE_PN0P_                 5980
+     $_DFFE_PP_                     16
+     $_NAND_                      2479
+     $_NOR_                       2562
+     $_NOT_                        632
+     $_ORNOT_                      423
+     $_OR_                        3755
+     $_XNOR_                      2842
+     $_XOR_                       6905
+
+   Area for cell type $_NOT_ is unknown!
+   Area for cell type $_AND_ is unknown!
+   Area for cell type $_NAND_ is unknown!
+   Area for cell type $_OR_ is unknown!
+   Area for cell type $_NOR_ is unknown!
+   Area for cell type $_XOR_ is unknown!
+   Area for cell type $_XNOR_ is unknown!
+   Area for cell type $_ANDNOT_ is unknown!
+   Area for cell type $_ORNOT_ is unknown!
+   Area for cell type $_DFFE_PP_ is unknown!
+   Area for cell type $_DFFE_PN0P_ is unknown!
+
